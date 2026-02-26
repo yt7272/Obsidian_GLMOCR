@@ -99,7 +99,7 @@ export class GLMOCRConverter extends BaseConverter {
         }
         
         const requestParams: RequestUrlParam = {
-          url: `http://${glmocrEndpoint}/v1/chat/completions`,
+          url: `http://${glmocrEndpoint}/chat/completions`,
           method: 'POST',
           throw: false,
           headers: {

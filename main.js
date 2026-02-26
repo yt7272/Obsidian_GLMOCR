@@ -24273,7 +24273,7 @@ Extract all text from this document. Preserve the structure, tables, and formatt
           offset += part.length;
         }
         const requestParams = {
-          url: `http://${glmocrEndpoint}/v1/chat/completions`,
+          url: `http://${glmocrEndpoint}/chat/completions`,
           method: "POST",
           throw: false,
           headers: {
