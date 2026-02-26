@@ -11,20 +11,18 @@ import { BaseConverter, ConversionResult } from './../converter';
 import { deleteOriginalFile } from '../utils/fileUtils';
 import { ConverterSettingDefinition } from '../utils/converterSettingsUtils';
 
-interface GLMOCRSuccessResponse {
-  choices: Array<{
-    message: {
-      content: string;
-    };
-  }>;
+interface GLMOCRMaaSSuccessResponse {
+  code: number;
+  msg: string;
+  data?: {
+    md_result?: string;
+    json_result?: unknown;
+  };
 }
 
-interface GLMOCRErrorResponse {
-  error?: {
-    message: string;
-    type: string;
-  };
-  message?: string;
+interface GLMOCRMaaSErrorResponse {
+  code: number;
+  msg: string;
 }
 
 export class GLMOCRConverter extends BaseConverter {
@@ -40,125 +38,47 @@ export class GLMOCRConverter extends BaseConverter {
     const isPDF = fileExt === 'pdf';
     
     if (isPDF) {
-      new Notice('Converting PDF with GLM-OCR (this may take a while)...', 15000);
+      new Notice('Converting PDF with GLM-OCR (cloud API)...', 15000);
     } else {
-      new Notice('Converting file with GLM-OCR...', 10000);
+      new Notice('Converting image with GLM-OCR (cloud API)...', 10000);
     }
 
     try {
-      let response;
-      const fileData = await app.vault.readBinary(file);
-      const glmocrEndpoint = settings.glmocrEndpoint || 'localhost:8080';
-      
-      // For PDFs, try using multipart form-data approach
-      if (isPDF) {
-        // Generate boundary
-        const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-        const parts = [];
-        
-        // Add the file
-        parts.push(
-          `--${boundary}\r\n` +
-          `Content-Disposition: form-data; name="file"; filename="${file.name}"\r\n` +
-          `Content-Type: application/pdf\r\n\r\n`
-        );
-        parts.push(new Uint8Array(fileData));
-        parts.push('\r\n');
-        
-        // Add the prompt
-        parts.push(
-          `--${boundary}\r\n` +
-          'Content-Disposition: form-data; name="prompt"\r\n\r\n' +
-          'Extract all text from this document. Preserve the structure, tables, and formatting as much as possible.\r\n'
-        );
-        
-        parts.push(`--${boundary}--\r\n`);
-        
-        // Combine all parts
-        const bodyParts = [];
-        for (const part of parts) {
-          if (typeof part === 'string') {
-            bodyParts.push(new TextEncoder().encode(part));
-          } else {
-            bodyParts.push(part);
-          }
-        }
-        
-        // Calculate total length
-        let totalLength = 0;
-        for (const part of bodyParts) {
-          totalLength += part.length;
-        }
-        
-        // Combine into single Uint8Array
-        const body = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const part of bodyParts) {
-          body.set(part, offset);
-          offset += part.length;
-        }
-        
-        const requestParams: RequestUrlParam = {
-          url: `http://${glmocrEndpoint}/chat/completions`,
-          method: 'POST',
-          throw: false,
-          headers: {
-            'Content-Type': `multipart/form-data; boundary=${boundary}`,
-          },
-          body: body,
-        };
-        
-        response = await requestUrl(requestParams);
-
-      } else {
-        // For non-PDF files (images), use base64 approach
-        const base64 = this.arrayBufferToBase64(fileData);
-        const mimeType = this.getMimeType(file.name);
-        
-        const requestParams: RequestUrlParam = {
-          url: `http://${glmocrEndpoint}/chat/completions`,
-          method: 'POST',
-          throw: false,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'mlx-community/GLM-OCR-bf16',
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: 'Extract all text from this image. Preserve the structure and format as much as possible.',
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:${mimeType};base64,${base64}`,
-                    },
-                  },
-                ],
-              },
-            ],
-            max_tokens: 4096,
-          }),
-        };
-        
-        response = await requestUrl(requestParams);
+      // Get API key from settings
+      const apiKey = settings.glmocrApiKey;
+      if (!apiKey) {
+        new Notice('Error: GLM-OCR API key not configured. Please set it in plugin settings.');
+        return false;
       }
+
+      const fileData = await app.vault.readBinary(file);
+      const base64 = this.arrayBufferToBase64(fileData);
+      const mimeType = this.getMimeType(file.name);
+      
+      // Create data URI
+      const dataUri = `data:${mimeType};base64,${base64}`;
+
+      const requestParams: RequestUrlParam = {
+        url: 'https://open.bigmodel.cn/api/paas/v4/layout_parsing',
+        method: 'POST',
+        throw: false,
+        headers: {
+          'Authorization': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'glm-ocr',
+          file: dataUri,
+        }),
+      };
+      
+      const response = await requestUrl(requestParams);
 
       if (response.status !== 200) {
         try {
-          const errorData = JSON.parse(response.text) as GLMOCRErrorResponse;
-          let errorMsg = `HTTP ${response.status}`;
-
-          if (errorData.error?.message) {
-            errorMsg = errorData.error.message;
-          } else if (errorData.message) {
-            errorMsg = errorData.message;
-          }
-
+          const errorData = JSON.parse(response.text) as GLMOCRMaaSErrorResponse;
+          const errorMsg = errorData.msg || `HTTP ${response.status}`;
+          
           console.error('GLM-OCR error response:', errorData);
           new Notice(`GLM-OCR conversion failed: ${errorMsg}`);
           return false;
@@ -181,18 +101,29 @@ export class GLMOCRConverter extends BaseConverter {
       try {
         const responseData = JSON.parse(
           response.text
-        ) as GLMOCRSuccessResponse;
+        ) as GLMOCRMaaSSuccessResponse;
 
-        const ocrText =
-          responseData.choices?.[0]?.message?.content ||
-          'No text extracted';
+        if (responseData.code !== 0) {
+          console.error('GLM-OCR API error:', responseData.msg);
+          new Notice(`GLM-OCR conversion failed: ${responseData.msg}`);
+          return false;
+        }
+
+        // Extract markdown from response
+        const ocrText = responseData.data?.md_result || '';
+        
+        if (!ocrText) {
+          console.error('GLM-OCR response has no data:', responseData);
+          new Notice('GLM-OCR conversion failed: No text extracted');
+          return false;
+        }
 
         const conversionResult: ConversionResult = {
           success: true,
           markdown: ocrText,
           images: {},
           metadata: {
-            model: 'GLM-OCR (mlx-vlm)',
+            model: 'GLM-OCR (cloud)',
             source_file: file.name,
           },
         };
@@ -242,38 +173,31 @@ export class GLMOCRConverter extends BaseConverter {
     settings: MarkerSettings,
     silent: boolean | undefined
   ): Promise<boolean> {
-    const glmocrEndpoint = settings.glmocrEndpoint || 'localhost:8080';
+    const apiKey = settings.glmocrApiKey;
+    
+    if (!apiKey) {
+      if (!silent) new Notice('Error: API key not configured');
+      return false;
+    }
     
     try {
       const requestParams: RequestUrlParam = {
-        url: `http://${glmocrEndpoint}/models`,
+        url: 'https://open.bigmodel.cn/api/paas/v4/models',
         method: 'GET',
         throw: false,
+        headers: {
+          'Authorization': apiKey,
+        },
       };
       const response = await requestUrl(requestParams);
       
       if (response.status === 200) {
-        if (!silent) new Notice('GLM-OCR connection successful!');
+        if (!silent) new Notice('GLM-OCR API key valid!');
         return true;
       } else {
-        // Try alternative health check endpoint
-        try {
-          const altRequestParams: RequestUrlParam = {
-            url: `http://${glmocrEndpoint}/`,
-            method: 'GET',
-            throw: false,
-          };
-          const altResponse = await requestUrl(altRequestParams);
-          if (altResponse.status === 200) {
-            if (!silent) new Notice('GLM-OCR connection successful!');
-            return true;
-          }
-        } catch {
-          // Ignore
-        }
         const errorMsg = `HTTP ${response.status}: ${response.text?.substring(0, 100) || 'No response'}`;
-        if (!silent) new Notice(`Error: ${errorMsg}`);
-        console.error('GLM-OCR connection error:', errorMsg);
+        if (!silent) new Notice(`API key error: ${errorMsg}`);
+        console.error('GLM-OCR API error:', errorMsg);
         return false;
       }
     } catch (error) {
@@ -287,14 +211,14 @@ export class GLMOCRConverter extends BaseConverter {
   getConverterSettings(): ConverterSettingDefinition[] {
     return [
       {
-        id: 'glmocrEndpoint',
-        name: 'GLM-OCR Endpoint',
+        id: 'glmocrApiKey',
+        name: 'GLM-OCR API Key',
         description:
-          'The endpoint for the GLM-OCR mlx-vlm server (e.g., localhost:8080)',
+          'Your Zhipu AI API key. Get it from https://open.bigmodel.cn/usercenter/apikeys',
         type: 'text',
-        placeholder: 'localhost:8080',
-        defaultValue: 'localhost:8080',
-        buttonText: 'Test connection',
+        placeholder: 'Your API key (e.g., your-api-key-here)',
+        defaultValue: '',
+        buttonText: 'Test API Key',
         buttonAction: async (app, settings) => {
           await this.testConnection(settings, false);
         },

@@ -22804,7 +22804,8 @@ var DEFAULT_SETTINGS = {
   imageLimit: 0,
   imageMinSize: 0,
   // Default to 0 (no minimum size)
-  glmocrEndpoint: "localhost:8080"
+  glmocrEndpoint: "localhost:8080",
+  glmocrApiKey: ""
 };
 var MarkerSettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app, plugin) {
@@ -24218,113 +24219,45 @@ var MistralAIConverter = class extends BaseConverter {
 var import_obsidian11 = require("obsidian");
 var GLMOCRConverter = class extends BaseConverter {
   async convert(app, settings, file) {
-    var _a, _b, _c, _d;
+    var _a;
     const folderPath = await this.prepareConversion(settings, file);
     if (!folderPath)
       return false;
     const fileExt = file.name.toLowerCase().split(".").pop();
     const isPDF = fileExt === "pdf";
     if (isPDF) {
-      new import_obsidian11.Notice("Converting PDF with GLM-OCR (this may take a while)...", 15e3);
+      new import_obsidian11.Notice("Converting PDF with GLM-OCR (cloud API)...", 15e3);
     } else {
-      new import_obsidian11.Notice("Converting file with GLM-OCR...", 1e4);
+      new import_obsidian11.Notice("Converting image with GLM-OCR (cloud API)...", 1e4);
     }
     try {
-      let response;
-      const fileData = await app.vault.readBinary(file);
-      const glmocrEndpoint = settings.glmocrEndpoint || "localhost:8080";
-      if (isPDF) {
-        const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
-        const parts = [];
-        parts.push(
-          `--${boundary}\r
-Content-Disposition: form-data; name="file"; filename="${file.name}"\r
-Content-Type: application/pdf\r
-\r
-`
-        );
-        parts.push(new Uint8Array(fileData));
-        parts.push("\r\n");
-        parts.push(
-          `--${boundary}\r
-Content-Disposition: form-data; name="prompt"\r
-\r
-Extract all text from this document. Preserve the structure, tables, and formatting as much as possible.\r
-`
-        );
-        parts.push(`--${boundary}--\r
-`);
-        const bodyParts = [];
-        for (const part of parts) {
-          if (typeof part === "string") {
-            bodyParts.push(new TextEncoder().encode(part));
-          } else {
-            bodyParts.push(part);
-          }
-        }
-        let totalLength = 0;
-        for (const part of bodyParts) {
-          totalLength += part.length;
-        }
-        const body = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const part of bodyParts) {
-          body.set(part, offset);
-          offset += part.length;
-        }
-        const requestParams = {
-          url: `http://${glmocrEndpoint}/chat/completions`,
-          method: "POST",
-          throw: false,
-          headers: {
-            "Content-Type": `multipart/form-data; boundary=${boundary}`
-          },
-          body
-        };
-        response = await (0, import_obsidian11.requestUrl)(requestParams);
-      } else {
-        const base64 = this.arrayBufferToBase64(fileData);
-        const mimeType = this.getMimeType(file.name);
-        const requestParams = {
-          url: `http://${glmocrEndpoint}/chat/completions`,
-          method: "POST",
-          throw: false,
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: "mlx-community/GLM-OCR-bf16",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: "Extract all text from this image. Preserve the structure and format as much as possible."
-                  },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:${mimeType};base64,${base64}`
-                    }
-                  }
-                ]
-              }
-            ],
-            max_tokens: 4096
-          })
-        };
-        response = await (0, import_obsidian11.requestUrl)(requestParams);
+      const apiKey = settings.glmocrApiKey;
+      if (!apiKey) {
+        new import_obsidian11.Notice("Error: GLM-OCR API key not configured. Please set it in plugin settings.");
+        return false;
       }
+      const fileData = await app.vault.readBinary(file);
+      const base64 = this.arrayBufferToBase64(fileData);
+      const mimeType = this.getMimeType(file.name);
+      const dataUri = `data:${mimeType};base64,${base64}`;
+      const requestParams = {
+        url: "https://open.bigmodel.cn/api/paas/v4/layout_parsing",
+        method: "POST",
+        throw: false,
+        headers: {
+          "Authorization": apiKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "glm-ocr",
+          file: dataUri
+        })
+      };
+      const response = await (0, import_obsidian11.requestUrl)(requestParams);
       if (response.status !== 200) {
         try {
           const errorData = JSON.parse(response.text);
-          let errorMsg = `HTTP ${response.status}`;
-          if ((_a = errorData.error) == null ? void 0 : _a.message) {
-            errorMsg = errorData.error.message;
-          } else if (errorData.message) {
-            errorMsg = errorData.message;
-          }
+          const errorMsg = errorData.msg || `HTTP ${response.status}`;
           console.error("GLM-OCR error response:", errorData);
           new import_obsidian11.Notice(`GLM-OCR conversion failed: ${errorMsg}`);
           return false;
@@ -24343,13 +24276,23 @@ Extract all text from this document. Preserve the structure, tables, and formatt
         const responseData = JSON.parse(
           response.text
         );
-        const ocrText = ((_d = (_c = (_b = responseData.choices) == null ? void 0 : _b[0]) == null ? void 0 : _c.message) == null ? void 0 : _d.content) || "No text extracted";
+        if (responseData.code !== 0) {
+          console.error("GLM-OCR API error:", responseData.msg);
+          new import_obsidian11.Notice(`GLM-OCR conversion failed: ${responseData.msg}`);
+          return false;
+        }
+        const ocrText = ((_a = responseData.data) == null ? void 0 : _a.md_result) || "";
+        if (!ocrText) {
+          console.error("GLM-OCR response has no data:", responseData);
+          new import_obsidian11.Notice("GLM-OCR conversion failed: No text extracted");
+          return false;
+        }
         const conversionResult = {
           success: true,
           markdown: ocrText,
           images: {},
           metadata: {
-            model: "GLM-OCR (mlx-vlm)",
+            model: "GLM-OCR (cloud)",
             source_file: file.name
           }
         };
@@ -24391,37 +24334,31 @@ Extract all text from this document. Preserve the structure, tables, and formatt
   }
   async testConnection(settings, silent) {
     var _a;
-    const glmocrEndpoint = settings.glmocrEndpoint || "localhost:8080";
+    const apiKey = settings.glmocrApiKey;
+    if (!apiKey) {
+      if (!silent)
+        new import_obsidian11.Notice("Error: API key not configured");
+      return false;
+    }
     try {
       const requestParams = {
-        url: `http://${glmocrEndpoint}/models`,
+        url: "https://open.bigmodel.cn/api/paas/v4/models",
         method: "GET",
-        throw: false
+        throw: false,
+        headers: {
+          "Authorization": apiKey
+        }
       };
       const response = await (0, import_obsidian11.requestUrl)(requestParams);
       if (response.status === 200) {
         if (!silent)
-          new import_obsidian11.Notice("GLM-OCR connection successful!");
+          new import_obsidian11.Notice("GLM-OCR API key valid!");
         return true;
       } else {
-        try {
-          const altRequestParams = {
-            url: `http://${glmocrEndpoint}/`,
-            method: "GET",
-            throw: false
-          };
-          const altResponse = await (0, import_obsidian11.requestUrl)(altRequestParams);
-          if (altResponse.status === 200) {
-            if (!silent)
-              new import_obsidian11.Notice("GLM-OCR connection successful!");
-            return true;
-          }
-        } catch (e) {
-        }
         const errorMsg = `HTTP ${response.status}: ${((_a = response.text) == null ? void 0 : _a.substring(0, 100)) || "No response"}`;
         if (!silent)
-          new import_obsidian11.Notice(`Error: ${errorMsg}`);
-        console.error("GLM-OCR connection error:", errorMsg);
+          new import_obsidian11.Notice(`API key error: ${errorMsg}`);
+        console.error("GLM-OCR API error:", errorMsg);
         return false;
       }
     } catch (error) {
@@ -24435,13 +24372,13 @@ Extract all text from this document. Preserve the structure, tables, and formatt
   getConverterSettings() {
     return [
       {
-        id: "glmocrEndpoint",
-        name: "GLM-OCR Endpoint",
-        description: "The endpoint for the GLM-OCR mlx-vlm server (e.g., localhost:8080)",
+        id: "glmocrApiKey",
+        name: "GLM-OCR API Key",
+        description: "Your Zhipu AI API key. Get it from https://open.bigmodel.cn/usercenter/apikeys",
         type: "text",
-        placeholder: "localhost:8080",
-        defaultValue: "localhost:8080",
-        buttonText: "Test connection",
+        placeholder: "Your API key (e.g., your-api-key-here)",
+        defaultValue: "",
+        buttonText: "Test API Key",
         buttonAction: async (app, settings) => {
           await this.testConnection(settings, false);
         }
