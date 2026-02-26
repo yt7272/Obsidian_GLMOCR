@@ -27,6 +27,7 @@ export interface MarkerSettings {
   imageLimit?: number;
   imageMinSize?: number; // Minimum height and width of images to extract
   glmocrEndpoint?: string; // GLM-OCR server endpoint
+  glmocrApiKey?: string; // API key for GLM-OCR cloud service
 }
 
 export const DEFAULT_SETTINGS: MarkerSettings = {
@@ -53,6 +54,7 @@ export const DEFAULT_SETTINGS: MarkerSettings = {
   imageLimit: 0,
   imageMinSize: 0, // Default to 0 (no minimum size)
   glmocrEndpoint: 'localhost:8080',
+  glmocrApiKey: '',
 };
 
 export class MarkerSettingTab extends PluginSettingTab {

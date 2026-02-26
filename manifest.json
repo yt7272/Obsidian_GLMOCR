@@ -1,9 +1,9 @@
 {
 	"id": "glm-ocr",
 	"name": "GLM-OCR",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"minAppVersion": "0.15.0",
-	"description": "Convert PDFs to Markdown with GLM-OCR. Supports local OCR on Apple Silicon Mac, MistralAI, Marker API, and more.",
+	"description": "Convert PDFs to Markdown with GLM-OCR. Supports local OCR on Apple Silicon Mac, MistralAI, Marker API, and more. Cloud API now with improved error handling.",
 	"author": "yt7272",
 	"authorUrl": "https://github.com/yt7272",
 	"fundingUrl": {},

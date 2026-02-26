@@ -24219,7 +24219,7 @@ var MistralAIConverter = class extends BaseConverter {
 var import_obsidian11 = require("obsidian");
 var GLMOCRConverter = class extends BaseConverter {
   async convert(app, settings, file) {
-    var _a;
+    var _a, _b;
     const folderPath = await this.prepareConversion(settings, file);
     if (!folderPath)
       return false;
@@ -24255,9 +24255,10 @@ var GLMOCRConverter = class extends BaseConverter {
       };
       const response = await (0, import_obsidian11.requestUrl)(requestParams);
       if (response.status !== 200) {
+        console.error("GLM-OCR non-200 response:", response.text);
         try {
           const errorData = JSON.parse(response.text);
-          const errorMsg = errorData.msg || `HTTP ${response.status}`;
+          const errorMsg = errorData.msg || errorData.message || ((_a = errorData.error) == null ? void 0 : _a.message) || `HTTP ${response.status}`;
           console.error("GLM-OCR error response:", errorData);
           new import_obsidian11.Notice(`GLM-OCR conversion failed: ${errorMsg}`);
           return false;
@@ -24277,11 +24278,12 @@ var GLMOCRConverter = class extends BaseConverter {
           response.text
         );
         if (responseData.code !== 0) {
-          console.error("GLM-OCR API error:", responseData.msg);
-          new import_obsidian11.Notice(`GLM-OCR conversion failed: ${responseData.msg}`);
+          const errorMessage = responseData.msg || responseData.message || "Unknown error";
+          console.error("GLM-OCR API error:", errorMessage, "Full response:", responseData);
+          new import_obsidian11.Notice(`GLM-OCR conversion failed: ${errorMessage}`);
           return false;
         }
-        const ocrText = ((_a = responseData.data) == null ? void 0 : _a.md_result) || "";
+        const ocrText = ((_b = responseData.data) == null ? void 0 : _b.md_result) || "";
         if (!ocrText) {
           console.error("GLM-OCR response has no data:", responseData);
           new import_obsidian11.Notice("GLM-OCR conversion failed: No text extracted");

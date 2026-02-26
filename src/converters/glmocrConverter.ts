@@ -13,7 +13,8 @@ import { ConverterSettingDefinition } from '../utils/converterSettingsUtils';
 
 interface GLMOCRMaaSSuccessResponse {
   code: number;
-  msg: string;
+  msg?: string;
+  message?: string;
   data?: {
     md_result?: string;
     json_result?: unknown;
@@ -22,7 +23,8 @@ interface GLMOCRMaaSSuccessResponse {
 
 interface GLMOCRMaaSErrorResponse {
   code: number;
-  msg: string;
+  msg?: string;
+  message?: string;
 }
 
 export class GLMOCRConverter extends BaseConverter {
@@ -75,9 +77,12 @@ export class GLMOCRConverter extends BaseConverter {
       const response = await requestUrl(requestParams);
 
       if (response.status !== 200) {
+        // Log the raw response for debugging
+        console.error('GLM-OCR non-200 response:', response.text);
         try {
-          const errorData = JSON.parse(response.text) as GLMOCRMaaSErrorResponse;
-          const errorMsg = errorData.msg || `HTTP ${response.status}`;
+          const errorData = JSON.parse(response.text);
+          // Handle multiple error formats: {msg}, {message}, {error: {message}}
+          const errorMsg = errorData.msg || errorData.message || (errorData.error?.message) || `HTTP ${response.status}`;
           
           console.error('GLM-OCR error response:', errorData);
           new Notice(`GLM-OCR conversion failed: ${errorMsg}`);
@@ -104,8 +109,10 @@ export class GLMOCRConverter extends BaseConverter {
         ) as GLMOCRMaaSSuccessResponse;
 
         if (responseData.code !== 0) {
-          console.error('GLM-OCR API error:', responseData.msg);
-          new Notice(`GLM-OCR conversion failed: ${responseData.msg}`);
+          // Handle both 'msg' and 'message' field names in response
+          const errorMessage = responseData.msg || responseData.message || 'Unknown error';
+          console.error('GLM-OCR API error:', errorMessage, 'Full response:', responseData);
+          new Notice(`GLM-OCR conversion failed: ${errorMessage}`);
           return false;
         }
 
