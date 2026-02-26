@@ -36,55 +36,117 @@ export class GLMOCRConverter extends BaseConverter {
     const folderPath = await this.prepareConversion(settings, file);
     if (!folderPath) return false;
 
-    new Notice('Converting file with GLM-OCR...', 10000);
+    const fileExt = file.name.toLowerCase().split('.').pop();
+    const isPDF = fileExt === 'pdf';
+    
+    if (isPDF) {
+      new Notice('Converting PDF with GLM-OCR (this may take a while)...', 15000);
+    } else {
+      new Notice('Converting file with GLM-OCR...', 10000);
+    }
 
     try {
-        const adapter = app.vault.adapter;
-      let realFilePath = file.path;
-      if (adapter instanceof FileSystemAdapter) {
-        realFilePath = adapter.getFullPath(file.path);
-      } else {
-        console.warn(
-          'Not using FileSystemAdapter - path may not be correctly resolved'
-        );
-      }
-
+      let response;
       const fileData = await app.vault.readBinary(file);
-      const base64 = this.arrayBufferToBase64(fileData);
-      const mimeType = this.getMimeType(file.name);
-
       const glmocrEndpoint = settings.glmocrEndpoint || 'localhost:8080';
-      const requestParams: RequestUrlParam = {
-        url: `http://${glmocrEndpoint}/chat/completions`,
-        method: 'POST',
-        throw: false,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'mlx-community/GLM-OCR-bf16',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Extract all text from this image or document. Preserve the structure and format as much as possible.',
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${mimeType};base64,${base64}`,
-                  },
-                },
-              ],
-            },
-          ],
-          max_tokens: 4096,
-        }),
-      };
+      
+      // For PDFs, try using multipart form-data approach
+      if (isPDF) {
+        // Generate boundary
+        const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+        const parts = [];
+        
+        // Add the file
+        parts.push(
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="file"; filename="${file.name}"\r\n` +
+          `Content-Type: application/pdf\r\n\r\n`
+        );
+        parts.push(new Uint8Array(fileData));
+        parts.push('\r\n');
+        
+        // Add the prompt
+        parts.push(
+          `--${boundary}\r\n` +
+          'Content-Disposition: form-data; name="prompt"\r\n\r\n' +
+          'Extract all text from this document. Preserve the structure, tables, and formatting as much as possible.\r\n'
+        );
+        
+        parts.push(`--${boundary}--\r\n`);
+        
+        // Combine all parts
+        const bodyParts = [];
+        for (const part of parts) {
+          if (typeof part === 'string') {
+            bodyParts.push(new TextEncoder().encode(part));
+          } else {
+            bodyParts.push(part);
+          }
+        }
+        
+        // Calculate total length
+        let totalLength = 0;
+        for (const part of bodyParts) {
+          totalLength += part.length;
+        }
+        
+        // Combine into single Uint8Array
+        const body = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const part of bodyParts) {
+          body.set(part, offset);
+          offset += part.length;
+        }
+        
+        const requestParams: RequestUrlParam = {
+          url: `http://${glmocrEndpoint}/v1/chat/completions`,
+          method: 'POST',
+          throw: false,
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          },
+          body: body,
+        };
+        
+        response = await requestUrl(requestParams);
 
-      const response = await requestUrl(requestParams);
+      } else {
+        // For non-PDF files (images), use base64 approach
+        const base64 = this.arrayBufferToBase64(fileData);
+        const mimeType = this.getMimeType(file.name);
+        
+        const requestParams: RequestUrlParam = {
+          url: `http://${glmocrEndpoint}/chat/completions`,
+          method: 'POST',
+          throw: false,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'mlx-community/GLM-OCR-bf16',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Extract all text from this image. Preserve the structure and format as much as possible.',
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${mimeType};base64,${base64}`,
+                    },
+                  },
+                ],
+              },
+            ],
+            max_tokens: 4096,
+          }),
+        };
+        
+        response = await requestUrl(requestParams);
+      }
 
       if (response.status !== 200) {
         try {
@@ -180,18 +242,21 @@ export class GLMOCRConverter extends BaseConverter {
     settings: MarkerSettings,
     silent: boolean | undefined
   ): Promise<boolean> {
+    const glmocrEndpoint = settings.glmocrEndpoint || 'localhost:8080';
+    
     try {
-      const glmocrEndpoint = settings.glmocrEndpoint || 'localhost:8080';
       const requestParams: RequestUrlParam = {
         url: `http://${glmocrEndpoint}/models`,
         method: 'GET',
         throw: false,
       };
       const response = await requestUrl(requestParams);
+      
       if (response.status === 200) {
         if (!silent) new Notice('GLM-OCR connection successful!');
         return true;
       } else {
+        // Try alternative health check endpoint
         try {
           const altRequestParams: RequestUrlParam = {
             url: `http://${glmocrEndpoint}/`,
@@ -204,12 +269,16 @@ export class GLMOCRConverter extends BaseConverter {
             return true;
           }
         } catch {
+          // Ignore
         }
-        if (!silent) new Notice(`Error connecting to GLM-OCR: ${response.status}`);
+        const errorMsg = `HTTP ${response.status}: ${response.text?.substring(0, 100) || 'No response'}`;
+        if (!silent) new Notice(`Error: ${errorMsg}`);
+        console.error('GLM-OCR connection error:', errorMsg);
         return false;
       }
     } catch (error) {
-      if (!silent) new Notice('Error connecting to GLM-OCR');
+      const errorMsg = error.message || 'Unknown error';
+      if (!silent) new Notice(`Connection failed: ${errorMsg}`);
       console.error('Error connecting to GLM-OCR:', error);
       return false;
     }

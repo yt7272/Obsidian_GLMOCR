@@ -24222,51 +24222,100 @@ var GLMOCRConverter = class extends BaseConverter {
     const folderPath = await this.prepareConversion(settings, file);
     if (!folderPath)
       return false;
-    new import_obsidian11.Notice("Converting file with GLM-OCR...", 1e4);
+    const fileExt = file.name.toLowerCase().split(".").pop();
+    const isPDF = fileExt === "pdf";
+    if (isPDF) {
+      new import_obsidian11.Notice("Converting PDF with GLM-OCR (this may take a while)...", 15e3);
+    } else {
+      new import_obsidian11.Notice("Converting file with GLM-OCR...", 1e4);
+    }
     try {
-      const adapter = app.vault.adapter;
-      let realFilePath = file.path;
-      if (adapter instanceof import_obsidian11.FileSystemAdapter) {
-        realFilePath = adapter.getFullPath(file.path);
-      } else {
-        console.warn(
-          "Not using FileSystemAdapter - path may not be correctly resolved"
-        );
-      }
+      let response;
       const fileData = await app.vault.readBinary(file);
-      const base64 = this.arrayBufferToBase64(fileData);
-      const mimeType = this.getMimeType(file.name);
       const glmocrEndpoint = settings.glmocrEndpoint || "localhost:8080";
-      const requestParams = {
-        url: `http://${glmocrEndpoint}/chat/completions`,
-        method: "POST",
-        throw: false,
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "mlx-community/GLM-OCR-bf16",
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "Extract all text from this image or document. Preserve the structure and format as much as possible."
-                },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: `data:${mimeType};base64,${base64}`
+      if (isPDF) {
+        const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
+        const parts = [];
+        parts.push(
+          `--${boundary}\r
+Content-Disposition: form-data; name="file"; filename="${file.name}"\r
+Content-Type: application/pdf\r
+\r
+`
+        );
+        parts.push(new Uint8Array(fileData));
+        parts.push("\r\n");
+        parts.push(
+          `--${boundary}\r
+Content-Disposition: form-data; name="prompt"\r
+\r
+Extract all text from this document. Preserve the structure, tables, and formatting as much as possible.\r
+`
+        );
+        parts.push(`--${boundary}--\r
+`);
+        const bodyParts = [];
+        for (const part of parts) {
+          if (typeof part === "string") {
+            bodyParts.push(new TextEncoder().encode(part));
+          } else {
+            bodyParts.push(part);
+          }
+        }
+        let totalLength = 0;
+        for (const part of bodyParts) {
+          totalLength += part.length;
+        }
+        const body = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const part of bodyParts) {
+          body.set(part, offset);
+          offset += part.length;
+        }
+        const requestParams = {
+          url: `http://${glmocrEndpoint}/v1/chat/completions`,
+          method: "POST",
+          throw: false,
+          headers: {
+            "Content-Type": `multipart/form-data; boundary=${boundary}`
+          },
+          body
+        };
+        response = await (0, import_obsidian11.requestUrl)(requestParams);
+      } else {
+        const base64 = this.arrayBufferToBase64(fileData);
+        const mimeType = this.getMimeType(file.name);
+        const requestParams = {
+          url: `http://${glmocrEndpoint}/chat/completions`,
+          method: "POST",
+          throw: false,
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "mlx-community/GLM-OCR-bf16",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "Extract all text from this image. Preserve the structure and format as much as possible."
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: `data:${mimeType};base64,${base64}`
+                    }
                   }
-                }
-              ]
-            }
-          ],
-          max_tokens: 4096
-        })
-      };
-      const response = await (0, import_obsidian11.requestUrl)(requestParams);
+                ]
+              }
+            ],
+            max_tokens: 4096
+          })
+        };
+        response = await (0, import_obsidian11.requestUrl)(requestParams);
+      }
       if (response.status !== 200) {
         try {
           const errorData = JSON.parse(response.text);
@@ -24341,8 +24390,9 @@ var GLMOCRConverter = class extends BaseConverter {
     }
   }
   async testConnection(settings, silent) {
+    var _a;
+    const glmocrEndpoint = settings.glmocrEndpoint || "localhost:8080";
     try {
-      const glmocrEndpoint = settings.glmocrEndpoint || "localhost:8080";
       const requestParams = {
         url: `http://${glmocrEndpoint}/models`,
         method: "GET",
@@ -24368,13 +24418,16 @@ var GLMOCRConverter = class extends BaseConverter {
           }
         } catch (e) {
         }
+        const errorMsg = `HTTP ${response.status}: ${((_a = response.text) == null ? void 0 : _a.substring(0, 100)) || "No response"}`;
         if (!silent)
-          new import_obsidian11.Notice(`Error connecting to GLM-OCR: ${response.status}`);
+          new import_obsidian11.Notice(`Error: ${errorMsg}`);
+        console.error("GLM-OCR connection error:", errorMsg);
         return false;
       }
     } catch (error) {
+      const errorMsg = error.message || "Unknown error";
       if (!silent)
-        new import_obsidian11.Notice("Error connecting to GLM-OCR");
+        new import_obsidian11.Notice(`Connection failed: ${errorMsg}`);
       console.error("Error connecting to GLM-OCR:", error);
       return false;
     }
