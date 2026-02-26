@@ -26,6 +26,7 @@ export interface MarkerSettings {
   // MistralAI parameters
   imageLimit?: number;
   imageMinSize?: number; // Minimum height and width of images to extract
+  glmocrEndpoint?: string; // GLM-OCR server endpoint
 }
 
 export const DEFAULT_SETTINGS: MarkerSettings = {
@@ -51,6 +52,7 @@ export const DEFAULT_SETTINGS: MarkerSettings = {
   skipCache: false,
   imageLimit: 0,
   imageMinSize: 0, // Default to 0 (no minimum size)
+  glmocrEndpoint: 'localhost:8080',
 };
 
 export class MarkerSettingTab extends PluginSettingTab {
@@ -74,6 +76,7 @@ export class MarkerSettingTab extends PluginSettingTab {
           .addOption('selfhosted', 'Selfhosted')
           .addOption('python-api', 'Python API')
           .addOption('mistralai', 'MistralAI')
+          .addOption('glmocr', 'GLM-OCR')
           .setValue(this.plugin.settings.apiEndpoint)
           .onChange(async (value) => {
             this.plugin.settings.apiEndpoint = value;

@@ -7,7 +7,7 @@
 
 ## 🌟 Introduction
 
-Welcome to this Obsidian PDF to Markdown Converter! This plugin brings the power of advanced PDF conversion directly into your Obsidian vault. By leveraging the capabilities of Marker through a self-hosted API, the hosted solution on [datalab.to](https://www.datalab.to/), or the powerful MistralAI OCR capabilities, this plugin offers a seamless way to transform your PDFs into rich, formatted Markdown files, with support for tables, formulas and more!
+Welcome to this Obsidian PDF to Markdown Converter! This plugin brings the power of advanced PDF conversion directly into your Obsidian vault. By leveraging the capabilities of Marker through a self-hosted API, the hosted solution on [datalab.to](https://www.datalab.to/), the powerful MistralAI OCR capabilities, or the GLM-OCR model for local processing, this plugin offers a seamless way to transform your PDFs into rich, formatted Markdown files, with support for tables, formulas and more!
 
 > [!IMPORTANT]
 > This plugin requires a Marker API endpoint, a paid account for datalab, the python api of marker, or a free MistralAI API key to work. Without an endpoint, the application can't convert anything.
@@ -19,6 +19,7 @@ You can find the related repositories and services here:
 - [Marker API Docker Container](https://hub.docker.com/r/wirawan/marker-api) (Container for self-hosting, needs Nvidia GPU)
 - [Marker API](https://github.com/adithya-s-k/marker-api) (API for self-hosting the conversion service)
 - [MistralAI](https://console.mistral.ai/) (Free OCR API with excellent results)
+- [GLM-OCR](https://github.com/zai-org/GLM-OCR) (Local OCR using MLX on Apple Silicon)
 
 ## 🚀 Features
 
@@ -50,7 +51,7 @@ When you want to support the development, consider buying me a coffee:
 To use this plugin, you'll need:
 
 1. A working Obsidian installation
-2. Access to a Marker API endpoint (self-hosted or paid service or python api) OR a free MistralAI API key
+2. Access to a Marker API endpoint (self-hosted or paid service or python api), a free MistralAI API key, OR a local GLM-OCR server
 
 ## 🔧 Setup
 
@@ -60,6 +61,7 @@ To use this plugin, you'll need:
    - **Datalab.to**: Sign up for a paid account
    - **Self-hosted Marker API**: Set up Docker on a machine with a solid GPU/CPU
    - **Python API**: Run the Python server when needed
+   - **GLM-OCR**: Set up mlx-vlm server on Apple Silicon Mac (macOS 14.0+)
 3. Configure your chosen endpoint/API key in the plugin settings
 
 ### Which solution should I use?
@@ -71,6 +73,7 @@ To use this plugin, you'll need:
 | **Hosted on datalab.to** | No setup required, fast and reliable, supports the developer and is easily accessible from anywhere | Costs a few dollars                                             |
 | **Self-Hosted via Docker**             | Full control over the conversion process, no costs for the API                                      | Requires a powerful machine, Setup can be complex for beginners |
 | **Self-Hosted via Python**             | Easy to set up, no Docker required                                                                  | Not all features available                                      |
+| **GLM-OCR (MLX)**                   | Runs locally on Apple Silicon, full data privacy, no API costs                                      | Requires macOS 14.0+ and Apple Silicon Mac                              |
 
 > [!NOTE]
 > **MistralAI Privacy Consideration**: When using the MistralAI endpoint, your PDFs will be uploaded to Mistral's servers for processing. These files are stored for at least 24 hours. If you have sensitive documents, consider using a self-hosted solution instead.
@@ -139,3 +142,64 @@ Happy converting! 📚➡️📝
     <img src="https://api.star-history.com/svg?repos=l3-n0x/obsidian-marker&type=Date" alt="Star History Chart">
   </a>
 </p>
+
+---
+
+### GLM-OCR Setup (Apple Silicon Mac)
+
+If you want to use GLM-OCR for local OCR processing (full data privacy, no API costs), follow these steps:
+
+#### 1. Install Dependencies
+
+```bash
+# Install uv package manager
+brew install uv
+
+# Create project directory
+mkdir -p ~/glm-ocr
+cd ~/glm-ocr
+
+# Create Python 3.12 virtual environment
+uv venv mlx-env --python 3.12
+
+# Activate and install mlx-vlm
+source mlx-env/bin/activate
+uv pip install git+https://github.com/Blaizzy/mlx-vlm.git
+```
+
+#### 2. Start the Server
+
+```bash
+# Option 1: Run directly
+source mlx-env/bin/activate
+mlx_vlm.server --trust-remote-code
+
+# Option 2: Use the start script (recommended)
+~/glm-ocr/start-server.sh
+```
+
+#### 3. First Run (Model Download)
+
+On the first run, the model will be automatically downloaded from Hugging Face:
+- Model: `mlx-community/GLM-OCR-bf16`
+- This may take several minutes depending on your internet connection
+
+The server runs on `http://localhost:8080` by default.
+
+#### 4. Configure obsidian-marker
+
+1. Open Obsidian → Settings → obsidian-marker
+2. Set **API Endpoint** to **GLM-OCR**
+3. Set **GLM-OCR Endpoint** to `localhost:8080`
+4. Click **Test connection** to verify
+
+#### 5. Convenience Scripts
+
+Two scripts are provided in `~/glm-ocr/`:
+
+- `start-server.sh` - Start the GLM-OCR server
+- `stop-server.sh` - Stop the GLM-OCR server
+
+To start automatically on login, add the start script to your Login Items in System Settings → General → Login Items.
+
+> **Note**: GLM-OCR requires macOS 14.0+ and an Apple Silicon Mac (M-series chip).
